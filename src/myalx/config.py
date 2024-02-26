@@ -6,6 +6,7 @@ class AlxConfig:
     """A configuration manager that handles reading and writing user configuration data."""
 
     def __init__(self, config_path: str = "~/.alxconfig") -> None:
+        """Initialize an AlxConfig instance."""
         self.config_path = Path(config_path).expanduser()
         self.config = self.load()
 
