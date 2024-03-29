@@ -1,183 +1,177 @@
-import json
 import re
 from pathlib import Path
 
 
-class AlxProject:
-    def __init__(self, project_data: dict = {}) -> None:
-        """Initialize an AlxProject instance."""
-        self.project_data = project_data
+class FileHandler:
+    def __init__(
+        self, json_data: dict, handler_name: str, file_extension: str
+    ) -> None:
+        self._json_data = json_data
+        self._handler_name = handler_name
+        self.file_extension = file_extension
 
-    def start(self) -> None:
-        """Start a new Alx project."""
-        project_dir = Path.cwd() / self.project_data.get("directory", "")
-        alx_directory = project_dir / ".alx"
-        alx_directory.mkdir(parents=True, exist_ok=True)
+    def create_and_populate_files(self) -> None:
+        """Create and populate files for the project."""
 
-        self.create_and_populate_readme_file(project_dir)
-        self.create_and_populate_files(project_dir)
-        self.create_and_populate_test_files(project_dir)
-
-        tags = self.project_data.get("tags", [])
-        metadata = self.project_data.get("metadata", {})
-
-        if "C" in tags:
-            self.create_and_populate_makefile(project_dir)
-            self.create_and_populate_header_file(project_dir)
-
-        if "Group project" in tags:
-            team_members = metadata["team"]["members"]
-
-            with (project_dir / "AUTHORS").open("w", encoding="utf-8") as authors_file:
-                authors_file.write(
-                    "# This file lists all contributors to the repository.\n\n"
-                )
-                authors_file.write("\n".join(team_members))
-
-        with (alx_directory / "project.json").open(
-            "w", encoding="utf-8"
-        ) as project_file:
-            json.dump(self.project_data, project_file, ensure_ascii=False, indent=4)
-
-    def create_and_populate_readme_file(self, directory):
-        readme_file_path = directory / "README.md"
-
-        readme_content = [
-            f"# {self.project_data.get('title', '')}",
-        ]
-
-        for task in self.project_data.get("tasks", []):
-            readme_content.append(f"\n## {task.get('title')}\n")
-            readme_content.extend(task.get("description", []))
-
-        readme_content.extend(
-            [
-                "",
-                "---",
-                "",
-                "*Please note that this README is dynamically generated and may not always reflect the most up-to-date information about the project.*",
-                "",
-                "---",
-                "",
-            ]
-        )
-
-        with readme_file_path.open("w", encoding="utf-8") as readme_file:
-            readme_file.write("\n".join(readme_content))
-
-    def create_and_populate_test_files(self, directory):
-        directory = directory / "tests"
-
-        tasks = self.project_data.get("tasks", [])
+        tasks = self._json_data.get("tasks", [])
         for task in tasks:
-            test_files = task.get("test_files", [])
-            if len(test_files) <= 0:
-                continue
+            directory = self.get_task_directory(task)
 
-            for test_file in test_files:
-                test_file_name = test_file.get("filename", "")
-                test_file_content = test_file.get("content", "")
-
-                if not test_file_name or not test_file_content:
-                    continue
-
-                directory.mkdir(parents=True, exist_ok=True)
-                file_path = directory / test_file_name
-
-                for index, line in enumerate(test_file_content):
-                    test_file_content[index] = re.sub(
-                        r'^#include\s+"(.*)"', r'#include "../\1"', line
+            for task_file in task.get("file", []):
+                task_file_path = directory / task_file
+                if (
+                    task_file_path.suffix == self.file_extension
+                    or not task_file_path.suffix
+                ):
+                    task_file_content = self.get_file_content(
+                        task_file_path, task
                     )
 
-                with file_path.open("w", encoding="utf-8") as file:
-                    file.write("\n".join(test_file_content))
+                    self.write_to_file(directory, task_file, task_file_content)
 
-    def create_and_populate_files(self, directory):
-        tasks = self.project_data.get("tasks", [])
+            tests_directory = directory / "tests"
+            for test in task.get("test", []):
+                test_file = test.get("file", "")
+                test_file_content = test.get("content", "")
+                self.write_to_file(
+                    tests_directory, test_file, test_file_content
+                )
 
-        for task in tasks:
-            task_files = task.get("files", [])
+    def get_root_directory(self) -> Path:
 
-            for task_file_name in task_files:
-                task_file_content = None
-                task_file_path = directory / task_file_name
+        root_directory = self._json_data.get("directory", "")
+        return Path(root_directory)
 
-                if "/" in task_file_name:
-                    task_file_path.parent.mkdir(parents=True, exist_ok=True)
+    def get_task_directory(self, task: dict) -> Path:
 
-                task_file_path.touch()
-                if task_file_path.suffix == "":
-                    task_file_content = ["#!/bin/bash"]
-                    task_file_path.chmod(task_file_path.stat().st_mode | 0o111)
+        directory = task.get("directory", "")
+        root_directory = self.get_root_directory()
+        github_repository = task.get("github_repository", "")
 
-                elif task_file_path.suffix == ".c":
-                    task_file_content = self.get_c_file_content(task)
+        if directory:
+            if "Group project" in self._json_data.get("tags", []):
+                return Path(github_repository) / directory
 
-                elif task_file_path.suffix == ".py":
-                    task_file_content = ["#!/usr/bin/python3"]
-                    # task_file_content = self.get_py_file_content(task)
+            return Path(directory)
 
-                if not task_file_content:
-                    continue
+        return Path(root_directory)
 
-                with task_file_path.open("w", encoding="utf-8") as task_file:
-                    task_file.write("\n".join(task_file_content))
+    def get_file_content(self, path: Path, task) -> list:
 
-    def get_c_file_content(self, task):
+        if path.suffix == "":
+            return ["#!/bin/bash", ""]
+
+        elif path.suffix == self.file_extension:
+            return self.get_file_content_specific(task)
+
+        return []
+
+    def get_file_content_specific(self, task: dict) -> list:
+
+        raise NotImplementedError(
+            "Subclasses must implement get_file_content_specific method"
+        )
+
+    def write_to_file(self, directory: Path, name: str, content: list) -> None:
+
+        file_path = directory / name
+
+        if file_path.exists():
+            return
+
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.touch()
+
+        if content:
+            with file_path.open("w", encoding="utf-8") as f:
+                f.write("\n".join(content))
+
+            self.modify_script_file_permissions(file_path)
+
+    def modify_script_file_permissions(self, path: Path) -> None:
+
+        if path.is_file() and self.is_script_file(path):
+            with path.open("r") as file:
+                line = file.readline()
+
+                if line.strip().startswith("#!"):
+                    path.chmod(path.stat().st_mode | 0o111)
+
+    def is_script_file(self, path: Path) -> bool:
+
+        script_extensions = [
+            ".py",
+            ".sh",
+            ".rb",
+            ".pl",
+            ".php",
+            ".js",
+            ".java",
+            ".cpp",
+            ".c",
+            ".cs",
+        ]
+
+        return path.suffix.lower() in script_extensions or not path.suffix
+
+
+class BashFileHandler(FileHandler):
+    def __init__(self, json_data: dict) -> None:
+        super().__init__(json_data, "Bash", ".sh")
+
+    def get_file_content_specific(self, task: dict) -> list:
+        return ["#!/bin/bash", ""]
+
+
+class CFileHandler(FileHandler):
+    def __init__(self, json_data: dict) -> None:
+        super().__init__(json_data, "C", ".c")
+
+    def create_and_populate_files(self) -> None:
+        super().create_and_populate_files()
+
+        root_directory = self.get_root_directory()
+        self.create_and_populate_makefile_file(root_directory)
+        self.create_and_populate_header_file(root_directory)
+
+    def get_file_content_specific(self, task: dict) -> list:
+
         c_file_content = []
 
-        header_file_name = self.project_data.get("header", "")
-        if header_file_name:
-            c_file_content.append(f'#include "{header_file_name}"')
-        else:
-            c_file_content.append("#include <stdio.h>")
+        header_file_name = self._json_data.get("header", "")
+        c_file_content.append(
+            f'#include "{header_file_name}"'
+            if header_file_name
+            else "#include <stdio.h>"
+        )
 
-        prototypes = task.get("prototypes", [])
+        prototypes = task.get("prototype", [])
         if prototypes:
             for prototype in prototypes:
                 match = re.search(r"\w+\s+\**(\w+)\s*\([^)]*\)", prototype)
                 if match:
                     function_name = match.group(1)
-                    parameters = re.findall(r"\b\w+\s+\**(\w+)\s*(?:,|\))", prototype)
-                    c_file_content.extend(
-                        [
-                            "",
-                            "/**",
-                            f" * {function_name} - Short description, single line.",
-                        ]
+                    parameters = re.findall(
+                        r"\b\w+\s+\**(\w+)\s*(?:,|\))", prototype
                     )
 
-                    for parameter in parameters:
-                        c_file_content.extend(
-                            [
-                                f" * @{parameter}: Description of parameter {parameter}.",
-                            ]
-                        )
-
-                    c_file_content.extend(
-                        [
-                            " * ",
-                            " * Return: Description of the returned value.",
-                            " */",
-                            "",
-                        ]
-                    )
                 else:
-                    c_file_content.extend(
-                        [
-                            "",
-                            "/**",
-                            " * function_name - Short description, single line",
-                            " * @parameterx: Description of parameter x",
-                            " * ",
-                            " * Return: Description of the returned value",
-                            " */",
-                            "",
-                        ]
-                    )
+                    function_name = "function_name"
+                    parameters = ["parameterx"]
 
                 c_file_content.extend(
                     [
+                        "",
+                        "/**",
+                        f" * {function_name} - Short description, single line.",
+                        *[
+                            f" * @{parameter}: Description of parameter {parameter}."
+                            for parameter in parameters
+                        ],
+                        " * ",
+                        " * Return: Description of the returned value.",
+                        " */",
+                        "",
                         f"{re.sub(r';', '', prototype)}",
                         "{",
                         "\t/* your code goes here */",
@@ -185,6 +179,7 @@ class AlxProject:
                         "",
                     ]
                 )
+
         else:
             c_file_content.extend(
                 [
@@ -200,60 +195,63 @@ class AlxProject:
                     "\t/* your code goes here */",
                     "\treturn (0);",
                     "}",
+                    "",
                 ]
             )
 
         return c_file_content
 
-    def create_and_populate_makefile(self, directory):
-        makefile_path = directory / "Makefile"
+    def create_and_populate_makefile_file(self, directory: Path) -> None:
+        """Create and populate the Makefile for the project."""
 
+        tags = self._json_data.get("tags", [])
+        if self._handler_name not in tags:
+            return
+
+        makefile_is_required = False
         makefile_content = [
             "# Makefile for Your Project",
             "",
         ]
 
-        tasks = self.project_data.get("tasks", [])
         output_filenames = set()
 
+        tasks = self._json_data.get("tasks", [])
         for task in tasks:
-            gcc_command = task.get("gcc_command", "")
+            compilation_command = task.get("compilation", "")
 
-            if not gcc_command:
+            if not compilation_command:
                 continue
 
-            # Replace file paths in makefile gcc_command
-            test_file_names = [
-                file.get("filename", "")
-                for file in task.get("test_files", [])
-                if file.get("filename", "") in gcc_command.strip()
-            ]
+            makefile_is_required = True
 
-            if test_file_names:
-                for test_file_name in test_file_names:
-                    pattern = r"\b" + re.escape(test_file_name) + r"\b"
-                    gcc_command = re.sub(
-                        pattern, f"tests/{test_file_name}", gcc_command
+            # Replace file paths in makefile gcc_command
+            for test_file in (
+                test_file.get("file", "") for test_file in task.get("test", [])
+            ):
+                if test_file and test_file in compilation_command.strip():
+                    pattern = rf"\b{re.escape(test_file)}\b"
+                    compilation_command = re.sub(
+                        pattern, f"tests/{test_file}", compilation_command
                     )
 
             # Extract output filenames for cleaning
-            matches = re.findall(r"-o\s+(\S+)", gcc_command)
+            matches = re.findall(r"-o\s+(\S+)", compilation_command)
             output_filenames.update(matches)
 
-            files = task.get("files", [""])
-            for file in files:
-                file_path = directory / file
+            for task_file in task.get("file", []):
+                task_file_path = directory / task_file
 
-                if file_path.suffix == ".c":
+                if task_file_path.suffix == ".c":
                     makefile_content.extend(
                         [
-                            f"{file_path.stem}:",
-                            f"\t{gcc_command}\n",
+                            f"{task_file_path.stem}:",
+                            f"\t{compilation_command}\n",
                         ]
                     )
 
-        tags = self.project_data.get("tags", [])
         if "Group project" in tags:
+            makefile_is_required = True
             makefile_content.extend(
                 [
                     "all:",
@@ -268,21 +266,20 @@ class AlxProject:
                     "clean:",
                     f"\t@rm -rf {' '.join(output_filenames)}",
                     '\t@printf "\e[34mAll clear!\e[0m\\n"',
+                    "",
                 ]
             )
 
-        with makefile_path.open("w", encoding="utf-8") as makefile:
-            makefile.write("\n".join(makefile_content))
+        if makefile_is_required:
+            self.write_to_file(directory, "Makefile", makefile_content)
 
-    def create_and_populate_header_file(self, directory):
-        header_file_name = self.project_data.get("header", "")
+    def create_and_populate_header_file(self, directory: Path) -> None:
 
+        header_file_name = self._json_data.get("header", "")
         if not header_file_name:
             return
 
-        header_file_path = directory / header_file_name
         header_file_name_upper = header_file_name.upper().replace(".", "_")
-        directory_name = self.project_data.get("directory", "")
 
         header_file_content = [
             f"#ifndef {header_file_name_upper}",
@@ -291,21 +288,21 @@ class AlxProject:
             "/*",
             f" * File: {header_file_name}",
             " * Desc: Header file containing declarations for all functions",
-            f" *       used in the {directory_name} directory",
+            f" *       used in the {directory.name} directory",
             " */",
             "",
         ]
 
         putchar_is_required = any(
-            "_putchar.c" in task.get("gcc_command", "").split()
-            for task in self.project_data.get("tasks", [])
+            "_putchar.c" in task.get("compilation", "").split()
+            for task in self._json_data.get("tasks", [])
         )
         if putchar_is_required:
             header_file_content.append("int _putchar(char c);")
-            self.create_and_populate_putchar(directory)
+            self.create_and_populate_putchar_file(directory)
 
-        for task in self.project_data.get("tasks", []):
-            prototypes = task.get("prototypes", [])
+        for task in self._json_data.get("tasks", []):
+            prototypes = task.get("prototype", [])
             for prototype in prototypes:
                 header_file_content.append(prototype)
 
@@ -313,14 +310,13 @@ class AlxProject:
             [
                 "",
                 f"#endif /* {header_file_name_upper} */",
+                "",
             ]
         )
 
-        with header_file_path.open("w", encoding="utf-8") as header_file:
-            header_file.write("\n".join(header_file_content))
+        self.write_to_file(directory, header_file_name, header_file_content)
 
-    def create_and_populate_putchar(self, directory):
-        putchar_file_path = directory / "_putchar.c"
+    def create_and_populate_putchar_file(self, directory: Path) -> None:
 
         putchar_file_content = [
             "#include <unistd.h>",
@@ -337,7 +333,164 @@ class AlxProject:
             "{",
             "\treturn (write(1, &c, 1));",
             "}",
+            "",
         ]
 
-        with putchar_file_path.open("w", encoding="utf-8") as putchar_file:
-            putchar_file.write("\n".join(putchar_file_content))
+        self.write_to_file(directory, "_putchar.c", putchar_file_content)
+
+
+class PythonFileHandler(FileHandler):
+    def __init__(self, json_data: dict) -> None:
+        super().__init__(json_data, "Python", ".py")
+
+    def get_file_content_specific(self, task: dict) -> list:
+
+        py_file_content = ["#!/usr/bin/python3"]
+
+        prototypes = task.get("prototype", [])
+        for prototype in prototypes:
+            py_file_content.extend(
+                [
+                    "",
+                    "",
+                    prototype,
+                    "    pass",
+                ]
+            )
+
+        py_file_content.append("")
+
+        return py_file_content
+
+
+class ProjectCreator:
+    def __init__(self, json_data: dict) -> None:
+        self._json_data = json_data
+        self._handlers = [
+            BashFileHandler(json_data),
+            PythonFileHandler(json_data),
+            CFileHandler(json_data),
+        ]
+
+    def start_project(self) -> None:
+        """Starts the project creation process."""
+
+        if not self._json_data:
+            raise ValueError("No data provided. Project creation aborted.")
+
+        try:
+            for handler in self._handlers:
+                handler.create_and_populate_files()
+
+            self.create_and_populate_readme_file()
+            self.create_and_populate_authors_file()
+
+        except Exception as e:
+            print(f"Error occurred during project creation: {e}")
+            raise e
+
+    def create_and_populate_readme_file(self) -> None:
+        """Create README.md file for the project."""
+
+        readme_content = [
+            f"# {self._json_data.get('title', '')}",
+        ]
+
+        tasks = self._json_data.get("tasks", [])
+        for task in tasks:
+            readme_content.append(f"\n## {task.get('title')}\n")
+            readme_content.extend(task.get("body", []))
+
+        readme_content.extend(
+            [
+                "",
+                "---",
+                "",
+                "*Please note that this README is dynamically generated and may not always reflect the most up-to-date information about the project.*",
+                "",
+                "---",
+                "",
+            ]
+        )
+
+        readme_file_handler = FileHandler(self._json_data, "README", ".md")
+        directory = readme_file_handler.get_root_directory()
+        readme_file_handler.write_to_file(
+            directory, "README.md", readme_content
+        )
+
+    def create_and_populate_authors_file(self) -> None:
+        """Create AUTHORS file for the project."""
+
+        members = self._json_data.get("members", [])
+        if members:
+            authors_content = [
+                "# This file lists all contributors to the repository.",
+                "",
+                "",
+            ]
+            authors_content.extend(members)
+
+            authors_file_handler = FileHandler(self._json_data, "AUTHORS", "")
+            directory = authors_file_handler.get_root_directory()
+            authors_file_handler.write_to_file(
+                directory, "AUTHORS", authors_content
+            )
+
+
+if __name__ == "__main__":
+    try:
+        json_data = {
+            "title": "Project Title",
+            "tags": ["C"],
+            "tasks": [
+                {
+                    "type": "mandatory",
+                    "title": "0. Task 0",
+                    "body": [
+                        "Task 1 description.",
+                        "```console",
+                        "command 1",
+                        "command 2",
+                        "```",
+                    ],
+                    "github_repository": "repository_name",
+                    "directory": "project_directory",
+                    "file": ["0-file_name.c"],
+                    "test": [
+                        {
+                            "file": "0-test_file_name.c",
+                            "content": ["test_content"],
+                        }
+                    ],
+                },
+                {
+                    "type": "mandatory",
+                    "title": "1. Task 1",
+                    "body": [
+                        "Task 2 description.",
+                        "```console",
+                        "command 1",
+                        "command 2",
+                        "```",
+                    ],
+                    "github_repository": "repository_name",
+                    "directory": "project_directory",
+                    "file": ["1-file_name.c"],
+                    "test": [
+                        {
+                            "file": "1-test_file_name.c",
+                            "content": ["test_content"],
+                        }
+                    ],
+                },
+            ],
+            "directory": "project_directory",
+        }
+
+        project = ProjectCreator(json_data)
+        project.start_project()
+
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        raise e
