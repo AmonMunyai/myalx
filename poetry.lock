@@ -258,21 +258,6 @@ files = [
 ]
 
 [[package]]
-name = "configparser"
-version = "6.0.1"
-description = "Updated configparser from stdlib for earlier Pythons."
-optional = false
-python-versions = ">=3.8"
-files = [
-    {file = "configparser-6.0.1-py3-none-any.whl", hash = "sha256:5a0da275bea56f871abaa9e0806331791e9d8ae2938e8b8797b99ab3e8e192c4"},
-    {file = "configparser-6.0.1.tar.gz", hash = "sha256:db45513e971e509496b150be31bd67b0e14ab20b78a383b677e4b158e2c682d8"},
-]
-
-[package.extras]
-docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.linker (>=1.9)", "sphinx (<7.2.5)", "sphinx (>=3.5)", "sphinx-lint"]
-testing = ["pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-mypy", "pytest-ruff (>=0.2.1)", "types-backports"]
-
-[[package]]
 name = "constantly"
 version = "23.10.4"
 description = "Symbolic constants in Python"
@@ -987,4 +972,4 @@ testing = ["coverage (>=5.0.3)", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "91fc9f31ebf942c3dce74b13ecf858c630c103d6bb5e5ed2a6b846ca63f6e148"
+content-hash = "35e0ef7cb8310a6cb09268197b75714189b8f3f0fa8a07d8f5499f9a2913e8d5"
