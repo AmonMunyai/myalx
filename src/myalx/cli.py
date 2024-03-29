@@ -72,17 +72,6 @@ def startproject(ctx, url, dir):
 
     process = CrawlerProcess(
         {
-            "FEEDS": {
-                "alx_project.json": {
-                    "format": "json",
-                    "encoding": "utf-8",
-                    "store_empty": False,
-                    "fields": None,
-                    "indent": 4,
-                    "item_export_kwargs": {"export_empty_fields": True},
-                    "overwrite": True,
-                }
-            },
             "ITEM_PIPELINES": {
                 "myalx.spider.AlxPipeline": 100,
             },
