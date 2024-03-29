@@ -11,6 +11,8 @@ python = "^3.9"
 click = "^8.1.7"
 scrapy = "^2.11.1"
 markdownify = "^0.11.6"
+pathlib = "^1.0.1"
+python-decouple = "^3.8"
 
 [tool.poetry.dev-dependencies]
 
