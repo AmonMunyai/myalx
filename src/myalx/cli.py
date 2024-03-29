@@ -48,12 +48,12 @@ def settings():
 def startproject(ctx, url, dir):
     """Create a new project."""
 
-    allowed_domain = "intranet.alxswe.com"
-
     alx_config = ctx.obj.get("alx_config", {})
     user_email = alx_config("EMAIL")
     user_password = alx_config("PASSWORD")
 
+    # Validate URL and extract project ID
+    allowed_domain = "intranet.alxswe.com"
     if re.match(r"^\d+$", url):
         url = f"https://{allowed_domain}/projects/{url}"
 
@@ -65,6 +65,7 @@ def startproject(ctx, url, dir):
     ):
         raise click.ClickException("Invalid URL.")
 
+    # Scrape data from URL
     scraped_data = {}
 
     def item_scraped(data):
@@ -89,6 +90,7 @@ def startproject(ctx, url, dir):
     )
     process.start()
 
+    # Create project based on scraped data
     project = ProjectCreator(scraped_data)
     project.start_project()
 
