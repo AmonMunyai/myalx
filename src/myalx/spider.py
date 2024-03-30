@@ -275,7 +275,7 @@ class AlxPipeline:
                 for index in range(start_index, end_index):
                     lines[index] = html.unescape(lines[index])
 
-                    if "$" in lines[index]:
+                    if "$" in lines[index] or "</code>" in lines[index]:
                         end_index = index
                         break
 
