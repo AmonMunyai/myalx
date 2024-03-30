@@ -63,7 +63,7 @@ class FileHandler:
     def get_file_content(self, path: Path, task) -> list:
 
         if path.suffix == "":
-            return ["#!/bin/bash", ""]
+            return [""]
 
         elif path.suffix == self.file_extension:
             return self.get_file_content_specific(task)
