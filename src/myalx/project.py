@@ -19,15 +19,8 @@ class FileHandler:
 
             for task_file in task.get("file", []):
                 task_file_path = directory / task_file
-                if (
-                    task_file_path.suffix == self.file_extension
-                    or not task_file_path.suffix
-                ):
-                    task_file_content = self.get_file_content(
-                        task_file_path, task
-                    )
-
-                    self.write_to_file(directory, task_file, task_file_content)
+                task_file_content = self.get_file_content(task_file_path, task)
+                self.write_to_file(directory, task_file, task_file_content)
 
             tests_directory = directory / "tests"
             for test in task.get("test", []):
@@ -50,22 +43,15 @@ class FileHandler:
 
         directory = task.get("directory", "")
         root_directory = self.get_root_directory()
-        github_repository = task.get("github_repository", "")
 
-        if directory:
-            if "Group project" in self._json_data.get("tags", []):
-                return Path(github_repository) / directory
+        if root_directory.name != directory:
+            return root_directory / directory
 
-            return Path(directory)
-
-        return Path(root_directory)
+        return Path(directory)
 
     def get_file_content(self, path: Path, task) -> list:
 
-        if path.suffix == "":
-            return [""]
-
-        elif path.suffix == self.file_extension:
+        if path.suffix == self.file_extension:
             return self.get_file_content_specific(task)
 
         return []
