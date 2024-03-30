@@ -62,18 +62,9 @@ class AlxSpider(scrapy.Spider):
                 .get("members", [])
             )
 
-            # -- Get header file name for C projects
-            if "C" in project_item.get("tags", []):
-                requirements_general = response.css(
-                    'h2:contains("Requirements") + h3:contains("General") + ul'
-                ).extract()
-
-                for paragraph in requirements_general:
-                    paragraph = markdownify(paragraph)
-
-                    match = re.search(r"(\d*-?[A-Za-z0-9_]+\.h)", paragraph)
-                    if match:
-                        project_item["header"] = match.group(1)
+            project_item["requirements"] = response.css(
+                'h2:contains("Requirements") + * + ul'
+            ).extract()
 
             # -- Tasks
             tasks = []
@@ -185,7 +176,7 @@ class AlxPipeline:
         # Filter and clean scraped tasks
         filtered_tasks = []
         for task in item.get("tasks", []):
-            task["file"] = task["file"].split(", ") if task["file"] else None
+            task["file"] = self.split_files(task)
             task["test"] = self.extract_test_files(task)
             task["compilation"] = self.extract_compilation_command(task)
             task["body"] = self.clean_markdown_body(task)
@@ -195,6 +186,7 @@ class AlxPipeline:
             filtered_tasks.append(filtered_task)
 
         item["tasks"] = filtered_tasks
+        item["requirements"] = self.extract_requirements(item)
 
         # item = {
         #     key: (value.strip() if isinstance(value, str) else value)
@@ -220,6 +212,29 @@ class AlxPipeline:
             return directory
 
         return ""
+
+    def extract_requirements(self, item) -> dict:
+        """Extract requirements from the item."""
+
+        requirements = {}
+        for paragraph in item.get("requirements", []):
+            paragraph = markdownify(paragraph)
+
+            header_match = re.search(r"(\d*-?[A-Za-z0-9_]+\.h)", paragraph)
+            if header_match:
+                requirements["header"] = header_match.group(1)
+
+            readme_match = re.search(r"(\d*-?README\.md)", paragraph)
+            if readme_match:
+                requirements["readme.md"] = readme_match.group(1)
+
+        return requirements
+
+    def split_files(self, task) -> list:
+        """Split files if comma-separated."""
+
+        files = task.get("file", "")
+        return files.split(", ") if files else []
 
     def clean_markdown_body(self, task: dict) -> list:
         """Clean the markdown body of a given task."""
@@ -386,9 +401,9 @@ class AlxProjectItem(scrapy.Item):
     title = scrapy.Field()
     tags = scrapy.Field()
     members = scrapy.Field()
-    header = scrapy.Field()
     tasks = scrapy.Field()
     directory = scrapy.Field()
+    requirements = scrapy.Field()
     # compilation = scrapy.Field()
 
 
