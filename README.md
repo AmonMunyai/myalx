@@ -1,6 +1,6 @@
 # myALX
 
-`myalx` is a command-line interface (CLI) tool designed to assist with various tasks related to ALX projects. This CLI offers functionalities to generate files, run self-contained checkers, and create new projects based on ALX intranet data.
+`myalx` is a versatile command-line interface (CLI) tool tailored for ALX projects. It streamlines tasks by enabling file generation, self-contained checker execution, and project creation using ALX intranet data.
 
 ## Installation
 
