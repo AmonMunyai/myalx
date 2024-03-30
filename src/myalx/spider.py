@@ -203,13 +203,18 @@ class AlxPipeline:
         tasks = item.get("tasks", [])
         if tasks:
             first_task = tasks[0]
-            github_repository = first_task.get("github_repository", "")
-            directory = first_task.get("directory", "")
+            github_repo_count = sum(
+                1 for task in tasks if task.get("github_repository", "")
+            )
+            directory_count = sum(
+                1 for task in tasks if task.get("directory", "")
+            )
 
-            if "Group project" in item.get("tags", []):
-                return github_repository
+            tags = item.get("tags", [])
+            if github_repo_count > directory_count or "Group project" in tags:
+                return first_task.get("github_repository", "")
 
-            return directory
+            return first_task.get("directory", "")
 
         return ""
 
