@@ -264,13 +264,14 @@ class AlxPipeline:
         test_files = []
 
         for paragraph in task.get("body", []):
-            match = re.search(r"cat (?!-)([^ \n]+)", paragraph)
+            match = re.search(r"cat (?!-)((?:[^ \n\\]+|\\ )+)", paragraph)
 
             if match:
                 test_file = match.group(1)
+                test_file = self.process_file_name(test_file)
+
                 lines = paragraph.split("\n")
                 start_index, end_index = 0, len(lines)
-
                 for index, line in enumerate(lines):
 
                     if match.group(0) in line:
@@ -293,6 +294,17 @@ class AlxPipeline:
                 )
 
         return test_files
+
+    def process_file_name(self, file_name: str) -> str:
+        """
+        Process file name with spaces escaped by a backslash and
+        write it normally
+        """
+
+        if "\\" in file_name:
+            return file_name.replace("\\ ", " ")
+
+        return file_name
 
     def extract_compilation_command(self, task: dict) -> str:
         """Extract compilation command based on the task's content."""
