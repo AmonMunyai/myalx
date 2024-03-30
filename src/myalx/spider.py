@@ -1,335 +1,450 @@
 import html
 import json
 import re
-from urllib.parse import urlparse
+from pathlib import Path
+from typing import Union
 
 import scrapy
+from decouple import Config, RepositoryEnv
 from markdownify import markdownify
+from scrapy.core.engine import CloseSpider
 from scrapy.crawler import CrawlerProcess
-from scrapy.exceptions import CloseSpider
 
 
 class AlxSpider(scrapy.Spider):
-    name = "alx"
-    allowed_domains = ["intranet.alxswe.com"]
+    name = "alx_spider"
+    allowed_domain = "intranet.alxswe.com"
     handle_httpstatus_list = [404, 410, 301, 500]
 
-    def __init__(self, email: str, password: str, url: str, callback=None) -> None:
-        """Initialize the AlxSpider instance."""
-
+    def __init__(
+        self, url, email, password, callback=None, *args, **kwargs
+    ) -> None:
+        super(AlxSpider).__init__(*args, **kwargs)
+        self.url = url
         self.email = email
         self.password = password
-        self.url = url
         self.callback = callback
 
     def start_requests(self):
-        """Generate initial requests to start the spider."""
+        yield scrapy.Request(self.url, callback=self.parse, dont_filter=True)
 
-        if re.match(r"^\d+$", self.url):
-            self.url = f"https://intranet.alxswe.com/projects/{self.url}"
+    def parse(self, response):
+        if "auth/sign_in" in response.url:
+            yield from self.parse_login(response)
 
-        parsed_url = urlparse(self.url)
-        if not (
-            parsed_url.scheme == "https"
-            and parsed_url.netloc == "intranet.alxswe.com"
-            and re.match(r"/projects/\d+", parsed_url.path)
-        ):
-            raise CloseSpider("Invalid URL.")
+        else:
+            project_item = AlxProjectItem()
 
-        yield scrapy.Request(self.url, callback=self.check_login, dont_filter=True)
+            # -- Project
+            project_item["title"] = response.css("h1.gap::text").get()
+            # project_item["compilation"] = response.css(
+            #     'h3:contains("Compilation") + * + pre code::text'
+            # ).get()
 
-    def check_login(self, response):
-        """Check if the spider is logged in based on the response."""
+            # -- Tags
+            react_props = response.css(
+                'div[data-react-class="tags/Tags"]::attr(data-react-props)'
+            ).get()
+            tags_data = json.loads(react_props) if react_props else {}
+            project_item["tags"] = [
+                tag["value"] for tag in tags_data.get("tags", [])
+            ]
 
-        if "sign_in" in response.url:
-            yield scrapy.FormRequest.from_response(
-                response,
-                formdata={
-                    "authenticity_token": response.css(
-                        "form input[name=authenticity_token]::attr(value)"
-                    ).extract_first(),
-                    "user[email]": self.email,
-                    "user[password]": self.password,
-                },
-                callback=self.parse,
+            # -- ProjectMetadata
+            react_props = response.css(
+                'div[data-react-class="projects/ProjectMetadata"]\
+                ::attr(data-react-props)'
+            ).get()
+            metadata_data = json.loads(react_props) if react_props else {}
+            project_item["members"] = (
+                metadata_data.get("metadata", {})
+                .get("team", {})
+                .get("members", [])
+            )
+
+            # -- Get header file name for C projects
+            if "C" in project_item.get("tags", []):
+                requirements_general = response.css(
+                    'h2:contains("Requirements") + h3:contains("General") + ul'
+                ).extract()
+
+                for paragraph in requirements_general:
+                    paragraph = markdownify(paragraph)
+
+                    match = re.search(r"(\d*-?[A-Za-z0-9_]+\.h)", paragraph)
+                    if match:
+                        project_item["header"] = match.group(1)
+
+            # -- Tasks
+            tasks = []
+            for _, task in enumerate(response.css("div[id^=task-num-]")):
+                task_item = AlxTaskItem()
+
+                # -- Heading
+                task_item["type"] = task.css(
+                    ".label-info::text"
+                ).extract_first()
+                task_item["title"] = task.css(
+                    ".panel-title::text"
+                ).extract_first()
+
+                # -- Body
+                task_item["prototype"] = task.css(
+                    ".panel-body ul li:contains('Prototype:') code::text"
+                ).extract()
+                task_item["body"] = (
+                    task.css(
+                        ".panel-body > .task_progress_score_bar ~ *"
+                    ).extract()
+                    if task.css(
+                        ".panel-body > .task_progress_score_bar ~ *"
+                    ).extract()
+                    != []
+                    else task.css(".panel-body > #user_id ~ *").extract()
+                )
+
+                # -- Group
+                task_item["github_repository"] = task.css(
+                    ".list-group-item > ul > li:contains('GitHub repository:')\
+                    code::text"
+                ).get()
+                task_item["directory"] = task.css(
+                    ".list-group-item > ul > li:contains('Directory:')\
+                    code::text"
+                ).get()
+                task_item["file"] = task.css(
+                    ".list-group-item > ul > li:contains('File:') code::text"
+                ).extract_first()
+
+                tasks.append(dict(task_item))
+
+            project_item["tasks"] = tasks
+
+            project_dict = dict(project_item)
+            yield project_dict
+
+            if self.callback is not None:
+                self.callback(project_dict)
+
+    def parse_login(self, response):
+        authenticity_token = response.css(
+            "form input[name=authenticity_token]::attr(value)"
+        ).extract_first()
+
+        login_payload = {
+            "user[email]": self.email,
+            "user[password]": self.password,
+            "authenticity_token": authenticity_token,
+        }
+
+        yield scrapy.FormRequest.from_response(
+            response, formdata=login_payload, callback=self.after_login
+        )
+
+    def after_login(self, response):
+        if "signed_in" in response.text:
+            yield scrapy.Request(
+                url=self.url, callback=self.parse, dont_filter=True
             )
 
         else:
-            yield self.parse(response)
+            alert = response.css(".alert.alert-danger::text").get()
 
-    def parse(self, response):
-        """Parse the response and extract information"""
+            if alert is not None:
+                raise CloseSpider(alert)
 
-        alert: str = response.css(".alert.alert-danger::text").get()
+            status_errors = {
+                404: "Page not found (404)",
+                410: "Gone (410)",
+                301: "Moved Permanently (301)",
+                500: "Internal Server Error (500)",
+            }
 
-        if alert is not None:
-            self.logger.error(f"\033[91m{alert}\033[0m")
-            raise CloseSpider(reason=alert)
+            if response.status in status_errors:
+                error_message = (
+                    f"{status_errors[response.status]} for URL: {response.url}"
+                )
 
-        elif response.status == 404:
-            error_message = f"Page not found (404) for URL: {response.url}"
-            self.logger.error(f"\033[91m{error_message}\033[0m")
-            raise CloseSpider(reason=error_message)
+            else:
+                error_message = f"Unexpected error (HTTP {response.status})\
+                for URL: {response.url}"
 
-        elif response.status == 410:
-            error_message = f"Gone (410) for URL: {response.url}"
-            self.logger.error(f"\033[91m{error_message}\033[0m")
-            raise CloseSpider(reason=error_message)
+            raise CloseSpider(error_message)
 
-        elif response.status == 301:
-            error_message = f"Moved Permanently (301) for URL: {response.url}"
-            self.logger.error(f"\033[91m{error_message}\033[0m")
-            raise CloseSpider(reason=error_message)
 
-        elif response.status == 500:
-            error_message = f"Internal Server Error (500) for URL: {response.url}"
-            self.logger.error(f"\033[91m{error_message}\033[0m")
-            raise CloseSpider(reason=error_message)
+class AlxPipeline:
+    """Scrapy pipeline to process and export scraped data."""
 
-        # else:
-        # 	error_message = f"Unexpected error (HTTP {response.status}) for URL: {response.url}"
-        # 	self.logger.error(f"\033[91m{error_message}\033[0m")
-        # 	raise CloseSpider(reason=error_message)
+    def process_item(self, item, spider):
+        """Process a scraped item."""
 
-        project_item = AlxProjectItem()
-        project_item["url"] = response.url
-        project_item["title"] = response.css("h1.gap::text").get()
-        project_item["requirements"] = response.css(
-            "#project-description.panel.panel-default > .panel-body > h2:contains('Requirements') ~ *"
-        ).extract()
+        # Determine project's main directory
+        item["directory"] = self.get_main_directory(item)
+        item["members"] = [name.title() for name in item.get("members", [])]
 
-        tasks = []
-        for index, task in enumerate(response.css("div[id^=task-num-]")):
-            task_item = AlxTaskItem()
-            task_item["no"] = index
-            task_item["title"] = task.css(".panel-title::text").extract_first()
-            task_item["type"] = task.css(".label-info::text").extract_first()
-            task_item["body"] = (
-                task.css(".panel-body > .task_progress_score_bar ~ *").extract()
-                if task.css(".panel-body > .task_progress_score_bar ~ *").extract()
-                != []
-                else task.css(".panel-body > #user_id ~ *").extract()
+        # Filter and clean scraped tasks
+        filtered_tasks = []
+        for task in item.get("tasks", []):
+            task["file"] = task["file"].split(", ") if task["file"] else None
+            task["test"] = self.extract_test_files(task)
+            task["compilation"] = self.extract_compilation_command(task)
+            task["body"] = self.clean_markdown_body(task)
+
+            cleaned_task = self.strip_strings(task)
+            filtered_task = self.filter_null_values(cleaned_task)
+            filtered_tasks.append(filtered_task)
+
+        item["tasks"] = filtered_tasks
+
+        # item = {
+        #     key: (value.strip() if isinstance(value, str) else value)
+        #     for key, value in item.items()
+        # }
+
+        cleaned_item = self.strip_strings(item)
+        filtered_item = self.filter_null_values(cleaned_item)
+        return filtered_item
+
+    def get_main_directory(self, item) -> str:
+        """Get the main directory for the scraped item."""
+
+        tasks = item.get("tasks", [])
+        if tasks:
+            first_task = tasks[0]
+            github_repository = first_task.get("github_repository", "")
+            directory = first_task.get("directory", "")
+
+            if "Group project" in item.get("tags", []):
+                return github_repository
+
+            return directory
+
+        return ""
+
+    def clean_markdown_body(self, task: dict) -> list:
+        """Clean the markdown body of a given task."""
+
+        cleaned_body = []
+
+        for paragraph in task.get("body", []):
+            paragraph = markdownify(
+                paragraph, code_language="console", bullets="*"
             )
-            task_item["github_repository"] = task.css(
-                ".list-group-item > ul > li:contains('GitHub repository:') code::text"
-            ).get()
-            task_item["directory"] = task.css(
-                ".list-group-item > ul > li:contains('Directory:') code::text"
-            ).get()
-            task_item["files"] = task.css(
-                ".list-group-item > ul > li:contains('File:') code::text"
-            ).extract_first()
-            task_item["prototypes"] = task.css(
-                ".panel-body ul li:contains('Prototype:') code::text"
-            ).extract()
-            tasks.append(dict(task_item))
+            paragraph = re.sub(r"\t", "  ", paragraph)
+            paragraph = re.sub(r"\n{2,}", "\n", paragraph)
+            paragraph = re.sub(r"\n```console", "```console", paragraph)
+            paragraph = re.sub(r"```\n", "```", paragraph)
+            cleaned_body.extend(paragraph.split("\n"))
 
-        project_item["tasks"] = tasks
+        return cleaned_body
 
-        react_props = response.css(
-            'div[data-react-class="tags/Tags"]::attr(data-react-props)'
-        ).get()
-        tags_data = json.loads(react_props) if react_props else {}
-        project_item["tags"] = [tag["value"] for tag in tags_data.get("tags", [])]
+    def extract_test_files(self, task: dict) -> list:
+        """Extract test files based on the task's content."""
 
-        react_props = response.css(
-            'div[data-react-class="projects/ProjectMetadata"]::attr(data-react-props)'
-        ).get()
-        tags_data = json.loads(react_props) if react_props else {}
-        project_item["metadata"] = tags_data.get("metadata", {})
+        test_files = []
 
-        project_dict = dict(project_item)
-        yield project_dict
+        for paragraph in task.get("body", []):
+            match = re.search(r"cat (?!-)([^ \n]+)", paragraph)
 
-        if self.callback is not None:
-            self.callback(project_dict)
+            if match:
+                test_file = match.group(1)
+                lines = paragraph.split("\n")
+                start_index, end_index = 0, len(lines)
+
+                for index, line in enumerate(lines):
+
+                    if match.group(0) in line:
+                        start_index = index + 1
+                        break
+
+                for index in range(start_index, end_index):
+                    lines[index] = html.unescape(lines[index])
+
+                    if "$" in lines[index]:
+                        end_index = index
+                        break
+
+                test_file_content = lines[start_index:end_index]
+                test_files.append(
+                    {
+                        "file": test_file,
+                        "content": test_file_content,
+                    }
+                )
+
+        return test_files
+
+    def extract_compilation_command(self, task: dict) -> str:
+        """Extract compilation command based on the task's content."""
+
+        compilation_command = ""
+
+        for paragraph in task.get("body", []):
+            paragraph = markdownify(
+                paragraph, code_language="console", bullets="*"
+            )
+            paragraph = re.sub(r"\t", "  ", paragraph)
+
+            gcc_commands = re.findall(r"gcc .+", paragraph)
+            if gcc_commands:
+                gcc_commands = [
+                    html.unescape(command) for command in gcc_commands
+                ]
+                compilation_command = (
+                    " && ".join(gcc_commands)
+                    if len(gcc_commands) > 1
+                    else "".join(gcc_commands)
+                )
+
+        return compilation_command
+
+    def strip_strings(self, obj) -> Union[str, list, dict]:
+        """
+        Recursively iterate through a dictionary, list, or string and apply
+        the `strip()` method to string values.
+        """
+
+        def _strip_dict(d: dict) -> dict:
+            """
+            Recursively strip string values in a dictionary.
+            """
+
+            return {
+                key: (
+                    self.strip_strings(value)
+                    # Don't strip keys that contain test code
+                    if key != "content" and isinstance(value, str)
+                    else value
+                )
+                for key, value in d.items()
+            }
+
+        def _strip_list(lst) -> list:
+            """
+            Recursively strip string values in a list.
+            """
+
+            return [
+                self.strip_strings(item) if isinstance(item, str) else item
+                for item in lst
+            ]
+
+        if isinstance(obj, str):
+            return obj.strip()
+
+        elif isinstance(obj, list):
+            return _strip_list(obj)
+
+        elif isinstance(obj, dict):
+            return _strip_dict(obj)
+
+        else:
+            return obj
+
+    def filter_null_values(self, obj) -> Union[dict, list]:
+        """
+        Recursively iterate through a dictionary and filter out keys with null
+        values (None or empty string).
+        """
+
+        def _filter_dict(d: dict) -> dict:
+            """
+            Filter out keys with null values (None or empty string) from a
+            dictionary.
+            """
+
+            return {
+                key: value
+                for key, value in d.items()
+                if value is not None and value != [] and value != ""
+            }
+
+        def _filter_list(lst: list) -> list:
+            """
+            Recursively filter out keys with null values (None or empty string)
+            from a list of dictionaries.
+            """
+
+            return [
+                _filter_dict(item) if isinstance(item, dict) else item
+                for item in lst
+            ]
+
+        if isinstance(obj, dict):
+            return _filter_dict(obj)
+
+        elif isinstance(obj, list):
+            return _filter_list(obj)
+
+        else:
+            return obj
 
 
-# Scrapy items ================================================================
 class AlxProjectItem(scrapy.Item):
     """Scrapy Item class to represent information about an ALX project."""
 
-    tags = scrapy.Field()
-    url = scrapy.Field()
     title = scrapy.Field()
-    no_of_tasks = scrapy.Field()
+    tags = scrapy.Field()
+    members = scrapy.Field()
+    header = scrapy.Field()
     tasks = scrapy.Field()
     directory = scrapy.Field()
-    requirements = scrapy.Field()
-    header = scrapy.Field()
-    metadata = scrapy.Field()
+    # compilation = scrapy.Field()
 
 
 class AlxTaskItem(scrapy.Item):
     """Scrapy Item class to represent information about an ALX task."""
 
-    no = scrapy.Field()
-    title = scrapy.Field()
     type = scrapy.Field()
+    title = scrapy.Field()
     body = scrapy.Field()
+    prototype = scrapy.Field()
     github_repository = scrapy.Field()
     directory = scrapy.Field()
-    description = scrapy.Field()
-    files = scrapy.Field()
-    prototypes = scrapy.Field()
+    file = scrapy.Field()
+    test = scrapy.Field()
+    compilation = scrapy.Field()
 
 
-# Scrapy pipelines ============================================================
-class AlxPipeline:
-    """Scrapy pipeline to process and export scraped data."""
+if __name__ == "__main__":
+    try:
+        config_file_path = Path("~/.alxconfig").expanduser()
+        alx_config = Config(RepositoryEnv(config_file_path))
 
-    def process_item(self, item, spider) -> dict:
-        """Process a scraped item."""
-        filtered_tasks = []
-        tasks = item.get("tasks", [])
+        user_email = alx_config("EMAIL")
+        user_password = alx_config("PASSWORD")
 
-        item["no_of_tasks"] = len(tasks)
-        item["url"] = item.get("url", "").strip()
-        item["title"] = item.get("title", "").strip()
+        project_id = str(input("Project ID: "))
+        project_url = f"https://intranet.alxswe.com/projects/{project_id}"
 
-        for paragraph in item.get("requirements", []):
-            paragraph = markdownify(paragraph)
-
-            match = re.search(r"(\d*-?[A-Za-z0-9_]+\.h)", paragraph)
-            if match:
-                item["header"] = match.group(1)
-
-        item.pop("requirements", None)
-
-        directories = []
-        for task in tasks:
-            directory = task.get("directory", "") or task.get("github_repository", "")
-            if directory:
-                directories.append(directory)
-
-            if task["files"]:
-                task["files"] = task.get("files", []).split(", ")
-                task["files"] = [
-                    re.sub(r"\s+", " ", file.strip()) for file in task.get("files", [])
-                ]
-            task["prototypes"] = [
-                re.sub(r"\s+", " ", prototype.strip())
-                for prototype in task.get("prototypes", "")
-            ]
-
-            for field in ["title", "type", "github_repository", "directory"]:
-                if task[field]:
-                    task[field] = task.get(field, "").strip()
-
-            gcc_command = None
-            test_files, description = [], []
-
-            for paragraph in task.get("body", []):
-                paragraph = markdownify(paragraph, code_language="console", bullets="*")
-                paragraph = re.sub(r"\t", "  ", paragraph)
-                paragraph_description = re.sub(r"\n{2,}", "\n", paragraph)
-                paragraph_description = re.sub(
-                    r"\n```console", "```console", paragraph_description
-                )
-                paragraph_description = re.sub(r"```\n", "```", paragraph_description)
-                description.extend(paragraph_description.split("\n"))
-
-                gcc_commands = re.findall(r"gcc .+", paragraph)
-                if gcc_commands:
-                    gcc_commands = [html.unescape(command) for command in gcc_commands]
-                    gcc_command = (
-                        " && ".join(gcc_commands)
-                        if len(gcc_commands) > 1
-                        else "".join(gcc_commands)
-                    )
-
-                match = re.search(r"cat (?!-)(\d*-?[A-Za-z0-9_.]+)", paragraph)
-                if match:
-                    test_filename = match.group(1)
-                    lines = paragraph.split("\n")
-                    start_index, end_index = None, None
-
-                    for index, line in enumerate(lines):
-                        lines[index] = html.unescape(line)
-                        match = re.search(r"cat (?!-)(\d*-?[A-Za-z0-9_.]+)", paragraph)
-
-                        if match.group(0) in line:
-                            start_index = index + 1
-                            break
-
-                    for index in range(start_index + 1, len(lines)):
-
-                        if "$" in lines[index]:
-                            end_index = index
-                            break
-                        lines[index] = html.unescape(lines[index])
-
-                    test_file_content = lines[start_index:end_index]
-
-                    test_files.append(
-                        {
-                            "filename": test_filename,
-                            "content": test_file_content,
-                        }
-                    )
-
-            task["description"] = description
-            task["gcc_command"] = gcc_command
-            task["test_files"] = test_files
-
-            task = {
-                key: value
-                for key, value in task.items()
-                if value is not None and value != []
-            }
-            filtered_tasks.append(task)
-
-            # Remove the 'body' field from the task item
-            task.pop("body", None)
-
-        item["tasks"] = filtered_tasks
-        item["directory"] = (
-            directories[0]
-            if all(item == directories[0] for item in directories)
-            else None
-        )
-
-        return item
-
-
-# Utility function to run the Scrapy Spider ===================================
-def run_spider(url: str, email: str, password: str) -> dict:
-    """Run the AlxSpider to scrape data from a specified URL after logging in."""
-
-    scraped_data = {}
-
-    def item_scraped(data):
-        scraped_data.update(data)
-
-    process = CrawlerProcess(
-        {
-            "FEEDS": {
-                "project_data.json": {
-                    "format": "json",
-                    "encoding": "utf8",
-                    "store_empty": False,
-                    "fields": None,
-                    "indent": 4,
-                    "item_export_kwargs": {
-                        "export_empty_fields": True,
-                    },
-                    "overwrite": True,
+        process = CrawlerProcess(
+            {
+                "FEEDS": {
+                    "alx_project.json": {
+                        "format": "json",
+                        "encoding": "utf-8",
+                        "store_empty": False,
+                        "fields": None,
+                        "indent": 4,
+                        "item_export_kwargs": {"export_empty_fields": True},
+                        "overwrite": True,
+                    }
                 },
-            },
-            "ITEM_PIPELINES": {
-                "myalx.spider.AlxPipeline": 300,
-            },
-            "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
-            "LOG_LEVEL": "INFO",
-        }
-    )
-    process.crawl(
-        crawler_or_spidercls=AlxSpider,
-        email=email,
-        password=password,
-        url=url,
-        callback=item_scraped,
-    )
-    process.start()
+                "ITEM_PIPELINES": {
+                    "myalx.spider.AlxPipeline": 100,
+                },
+                "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
+                "LOG_LEVEL": "INFO",
+            }
+        )
+        process.crawl(
+            AlxSpider,
+            url=project_url,
+            email=user_email,
+            password=user_password,
+        )
+        process.start()
 
-    return scraped_data
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        raise e

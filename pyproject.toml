@@ -8,19 +8,14 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.9"
-configparser = "^6.0.1"
 click = "^8.1.7"
 scrapy = "^2.11.1"
 markdownify = "^0.11.6"
-
-[tool.poetry.dev-dependencies]
+pathlib = "^1.0.1"
+python-decouple = "^3.8"
 
 [tool.poetry.scripts]
-myalx = "myalx.myalx:main"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.0.2"
-pytest-cov = "^4.1.0"
+myalx = "myalx.cli:cli"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
