@@ -403,7 +403,7 @@ class ProjectCreator:
             return
 
         readme_content = [
-            f"# {self._json_data.get('title', '')}",
+            f"# {self._json_data.get('title', '').strip()}",
         ]
 
         tasks = self._json_data.get("tasks", [])
