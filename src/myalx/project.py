@@ -40,6 +40,10 @@ class FileHandler:
     def get_root_directory(self) -> Path:
 
         root_directory = self._json_data.get("directory", "")
+
+        if not root_directory:
+            return Path.cwd()
+
         return Path(root_directory)
 
     def get_task_directory(self, task: dict) -> Path:
@@ -138,7 +142,9 @@ class CFileHandler(FileHandler):
 
         c_file_content = []
 
-        header_file_name = self._json_data.get("header", "")
+        requirements = self._json_data.get("requirements", {})
+        header_file_name = requirements.get("header", "")
+
         c_file_content.append(
             f'#include "{header_file_name}"'
             if header_file_name
@@ -275,7 +281,8 @@ class CFileHandler(FileHandler):
 
     def create_and_populate_header_file(self, directory: Path) -> None:
 
-        header_file_name = self._json_data.get("header", "")
+        requirements = self._json_data.get("requirements", {})
+        header_file_name = requirements.get("header", "")
         if not header_file_name:
             return
 
@@ -391,6 +398,11 @@ class ProjectCreator:
 
     def create_and_populate_readme_file(self) -> None:
         """Create README.md file for the project."""
+
+        requirements = self._json_data.get("requirements", {})
+        readme_is_required = requirements.get("readme.md", "")
+        if not readme_is_required:
+            return
 
         readme_content = [
             f"# {self._json_data.get('title', '')}",
