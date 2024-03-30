@@ -370,6 +370,17 @@ class PythonFileHandler(FileHandler):
         return py_file_content
 
 
+class JavaScriptFileHandler(FileHandler):
+    def __init__(self, json_data: dict) -> None:
+        super().__init__(json_data, "JavaScript", ".js")
+
+    def get_file_content_specific(self, task: dict) -> list:
+
+        js_file_content = [""]
+
+        return js_file_content
+
+
 class ProjectCreator:
     def __init__(self, json_data: dict) -> None:
         self._json_data = json_data
@@ -377,6 +388,7 @@ class ProjectCreator:
             BashFileHandler(json_data),
             PythonFileHandler(json_data),
             CFileHandler(json_data),
+            JavaScriptFileHandler(json_data),
         ]
 
     def start_project(self) -> None:
