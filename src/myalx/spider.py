@@ -26,9 +26,11 @@ class AlxSpider(scrapy.Spider):
         self.callback = callback
 
     def start_requests(self):
-        yield scrapy.Request(self.url, callback=self.parse, dont_filter=True)
+        yield scrapy.Request(
+            self.url, callback=self.parse_item, dont_filter=True
+        )
 
-    def parse(self, response):
+    def parse_item(self, response):
         if "auth/sign_in" in response.url:
             yield from self.parse_login(response)
 
@@ -135,7 +137,7 @@ class AlxSpider(scrapy.Spider):
     def after_login(self, response):
         if "signed_in" in response.text:
             yield scrapy.Request(
-                url=self.url, callback=self.parse, dont_filter=True
+                url=self.url, callback=self.parse_item, dont_filter=True
             )
 
         else:
